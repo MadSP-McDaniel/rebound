@@ -2,6 +2,9 @@
   <img src="./rebound_logo.png" alt="Rebound Logo" width="300"/>
 </p>
 
+[![DOI](https://zenodo.org/badge/1180968297.svg)](https://doi.org/10.5281/zenodo.19009015)
+
+
 
 Rebound is a framework that provides secure version controls for data stored in the cloud. It can be integrated into applications or used as a standalone service to provide a trust anchor (i.e., a hardware-rooted, cryptographic source of truth over data integrity and freshness) for arbitrary cloud applications. It is built on Tessera transparency logs. It is targeted specifically for cloud applications running inside trusted execution environments that require high assurance over data integrity and freshness; Rebound itself is also designed to run in such an environment. For a quick start with our GitLab CI benchmarks, skip to `Quickstart` below. Reference:
 
