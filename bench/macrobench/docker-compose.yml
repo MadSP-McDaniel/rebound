@@ -1,0 +1,91 @@
+networks:
+  ci_net:
+    driver: bridge
+
+volumes:
+  gitlab_config:
+  gitlab_data:
+  gitlab_logs:
+  runner_config:
+  k3s_varlib:
+  k3s_etc:
+  rebound_data:
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    hostname: gitlab
+    container_name: gitlab
+    restart: unless-stopped
+    networks: [ci_net]
+    ports:
+      - "8089:8089"
+      - "2224:22"
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://${GITLAB_EXTERNAL_HOST:-localhost}:8089'
+        # Ensure NGINX accepts both "localhost" (host access) and "gitlab" (in-network access)
+        nginx['listen_port'] = 8089
+        nginx['listen_addresses'] = ['0.0.0.0']
+        nginx['server_name'] = '${GITLAB_EXTERNAL_HOST:-localhost} gitlab'
+        gitlab_rails['initial_root_password'] = 'xY-7ab_!zPq-R9'
+
+  runner:
+    image: gitlab/gitlab-runner:latest
+    container_name: gitlab-runner
+    restart: unless-stopped
+    depends_on: [gitlab]
+    networks: [ci_net]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner_config:/etc/gitlab-runner
+
+  rebound:
+    build:
+      context: ../..
+      dockerfile: cmd/prod-server/Dockerfile
+    container_name: rebound
+    networks: [ci_net]
+    environment:
+      - ROLLBACK_STORAGE_PATH=/data
+      - REBOUND_HOME=/rebound-home
+    volumes:
+      - rebound_data:/data
+      - type: bind
+        source: ../../o
+        target: /rebound-home/o
+    ports:
+      - "8080:8080"
+
+  # Lightweight single-node Kubernetes for macrobenchmark deployments
+  k3s:
+    image: rancher/k3s:latest
+    container_name: k3s
+    privileged: true
+    networks: [ci_net]
+    # Include service DNS name in TLS cert so clients can talk to https://k3s:6443
+    command: server --disable=traefik --tls-san k3s
+    environment:
+      - K3S_KUBECONFIG_OUTPUT=/etc/rancher/k3s/k3s.yaml
+      - K3S_KUBECONFIG_MODE=644
+    volumes:
+      - k3s_varlib:/var/lib/rancher/k3s
+      - k3s_etc:/etc/rancher/k3s
+    ports:
+      - "6443:6443"
+
+  # Simple HTTP server to expose kubeconfig to CI jobs on the same network
+  k3s-kubeconfig:
+    image: python:3.12-alpine
+    container_name: k3s-kubeconfig
+    depends_on: [k3s]
+    networks: [ci_net]
+    volumes:
+      - k3s_etc:/cfg:ro
+    command: sh -c "python -m http.server 8000 -d /cfg"
+    ports:
+      - "8000:8000"

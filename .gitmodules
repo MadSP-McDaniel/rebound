@@ -1,0 +1,6 @@
+[submodule "tessera"]
+	path = tessera
+	url = git@github.com:MadSP-McDaniel/tessera.git
+[submodule "rebound-sample-workloads"]
+	path = rebound-sample-workloads
+	url = git@github.com:MadSP-McDaniel/rebound-sample-workloads.git
