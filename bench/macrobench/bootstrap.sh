@@ -30,15 +30,14 @@ prompt_host() {
 }
 
 wait_gitlab() {
-  say "Waiting for GitLab at ${GITLAB_URL} ..."
-  for i in {1..120}; do
+  say "Waiting for GitLab at ${GITLAB_URL} (this may take several minutes on first run)..."
+  while true; do
     # Hit a public page (no auth) and bypass proxies; /users/sign_in returns 200 when Rails/NGINX are ready
     if curl -sfL --noproxy "*" "${GITLAB_URL}/users/sign_in" >/dev/null; then
       say "GitLab is up"; return 0
     fi
     sleep 2
   done
-  say "GitLab did not become healthy in time"; exit 1
 }
 
 get_runner_container() {
