@@ -134,16 +134,6 @@ Note: You can monitor the active Gitlab pipelines for the repo (e.g., `http://${
 docker compose down -v
 ```
 
-Notes on bootstrap:
-- Creates a GitLab runner with the `local` tag via the API, registers it inside the `gitlab-runner` container, sets `runners.docker.network_mode = "macrobench_ci_net"`, and restarts the container.
-- Mints a fresh Personal Access Token for the root user programmatically (via gitlab-rails), validates it against the API, and saves it in `./.macrobench.env` as `export GITLAB_PAT=...`.
-- Creates or reuses a `sample-app` project and force-pushes the sample workloads using the PAT (required for Git over HTTP).
-
-Notes on run.sh:
-- If a job fails (i.e., the script reports a failure, or you observe a failure in the GitLab web interface), check that all containers are running (`docker compose ps`), check the runner logs (`docker logs gitlab-runner`), and check the job logs in the GitLab web interface for further details to debug.
-- It always sources `./.macrobench.env` if present so values in that file (e.g., `GITLAB_PAT`) override any existing environment variables.
-- CI jobs are tagged `[local]`; ensure your runner has tag `local`.
-
 <!-- ### Pipeline jobs
 
 The sample pipeline (in `rebound-sample-workloads/.gitlab-ci.yml`) communicates with the Rebound service at `http://rebound:8080` (service name and port on the Compose network).
@@ -182,6 +172,18 @@ Outputs and data locations:
 - Service data: stored in the Docker named volume mounted at `/data` inside the `rebound` container (not bind-mounted to the host).
 - Host-visible outputs: written under `$REBOUND_HOME/o` on the host. The macrobenchmark compose binds the repo's `o/` folder into the container at `/rebound-home/o`. -->
 
+## Notes
+
+### Notes on bootstrap
+- Creates a GitLab runner with the `local` tag via the API, registers it inside the `gitlab-runner` container, sets `runners.docker.network_mode = "macrobench_ci_net"`, and restarts the container.
+- Mints a fresh Personal Access Token for the root user programmatically (via gitlab-rails), validates it against the API, and saves it in `./.macrobench.env` as `export GITLAB_PAT=...`.
+- Creates or reuses a `sample-app` project and force-pushes the sample workloads using the PAT (required for Git over HTTP).
+
+### Notes on run.sh
+- If a job fails (i.e., the script reports a failure, or you observe a failure in the GitLab web interface), check that all containers are running (`docker compose ps`), check the runner logs (`docker logs gitlab-runner`), and check the job logs in the GitLab web interface for further details to debug.
+- It always sources `./.macrobench.env` if present so values in that file (e.g., `GITLAB_PAT`) override any existing environment variables.
+- CI jobs are tagged `[local]`; ensure your runner has tag `local`.
+
 ### Pipeline variables
 
 - `DEPLOYMENT_SERVER_URL` (default: `http://rebound:8080`)
@@ -196,7 +198,7 @@ Outputs and data locations:
 - GitLab URL mismatch: host access uses `http://${GITLAB_EXTERNAL_HOST}:8089`; services on the compose network use `http://gitlab:8089`.
 - PAT verification: `curl -sS -o /dev/null -w "%{http_code}\n" --header "PRIVATE-TOKEN: $GITLAB_PAT" http://${GITLAB_EXTERNAL_HOST}:8089/api/v4/user` should return `200`.
 
-## Notes
+### Other
 - This benchmark assumes you are running the local Docker Compose stack that includes the `rebound` service on the same Docker network as GitLab Runner, so `http://rebound:8080` is reachable from CI jobs.
 - Our examples do not use Sigstore/cosign for image signing, as Rebound already authenticates pipeline outputs (in addition to other things).
 - We have a Tessera submodule because we needed to modify the `minCheckpointInterval` in `tessera/storage/posix/files.go` to be lower than the default 1 second.
