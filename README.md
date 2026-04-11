@@ -24,18 +24,14 @@ Rebound is a framework that provides secure version controls for data stored in 
 rebound/
 ├── librebound/   # Core library APIs
 ├── cmd/          # HTTP servers (prod-server, simple-server)
-└── tests/        # Unit + end-to-end tests
+├── tests/        # Unit + end-to-end tests
+└── bench/        # Benchmark scripts
 ```
 
 ## Pre-requisites
-- Docker (for micro-benchmarks) and Docker Compose (for macro-benchmarks)
-<!-- - Ubuntu 24.04 LTS (not tested on other OSes but should work with minor tweaks)
-- Go 1.24
-- Docker (for macro-benchmarking)
-- Python3 + matplotlib for plotting benchmark results: `sudo apt update && sudo apt -y install python3 python3-matplotlib python3-pandas python3-seaborn` -->
-- After cloning this repo, run:
-    - `git submodule update --init --recursive` to initialize submodules
-    - `go mod tidy` in all subdirs to clean up Go module dependencies
+- Docker (for micro-benchmarks) and Docker Compose (for macro-benchmarks) — see the [Docker install guide](https://docs.docker.com/engine/install/ubuntu/) for Ubuntu
+- Tested Platform: Ubuntu 24.04 LTS on the host system (not tested on other OSes but should work with minor tweaks as the only host requirement is Docker/Docker Compose installation). No special hardware requirements.
+- After cloning this repo, run `./setup.sh --host` to initialize submodules and tidy Go dependencies
 
 <!-- - After cloning this repo, set `REBOUND_HOME` env var to the absolute path of the `rebound/` directory (either export it in your shell or shell profile). -->
 
@@ -74,17 +70,14 @@ Then try `tests/test_end_to_end_workflow.sh`. -->
 
 Two types:
 - `librebound` unit tests: single-leaf updates, verification, heads-only/selective rollback with presence proofs, pruning/deauth gating, and recovery (double-increment reseal)
-	<!-- - Now uses direct/per-key leaves (OVM entries) and verifies inclusion of per-key leaves plus the "current-view" leaf for gating; includes heads-only/selective rollback, pruning/deauth gating, and recovery (double-increment reseal) -->
+    <!-- - Now uses direct/per-key leaves (OVM entries) and verifies inclusion of per-key leaves plus the "current-view" leaf for gating; includes heads-only/selective rollback, pruning/deauth gating, and recovery (double-increment reseal) -->
 - `tests/` end-to-end: server API workflow and snapshot lifecycle
 
 Run all tests:
 ```bash
 docker run -it -v .:/rebound mcr.microsoft.com/devcontainers/go:1-1.24-bookworm
 (enter container shell)
-REBOUND_HOME=/rebound
-cd $REBOUND_HOME && ./setup.sh
-mkdir -p o
-
+source /rebound/setup.sh
 cd tests && ./test_all.sh
 ```
 
@@ -95,13 +88,11 @@ Run microbenchmarks by varying parameters such as the number of objects to versi
 ```bash
 docker run -it -v .:/rebound mcr.microsoft.com/devcontainers/go:1-1.24-bookworm
 (enter container shell)
-REBOUND_HOME=/rebound
-cd $REBOUND_HOME && ./setup.sh
-mkdir -p o
-
+source /rebound/setup.sh
 cd bench/microbench
+
 # Run `go run microbench.go --help` for details on the flags; example:
-go run microbench.go --sizes=25 --updates=1 --trials=1 --measure-storage=true --obj-bytes=1 --query-sample=25 --prune-keep=25 --skip-prune-bench=true --work=../../o/tessera --out=../../o/micro
+go run -buildvcs=false microbench.go --sizes=25 --updates=1 --trials=1 --measure-storage=true --obj-bytes=1 --query-sample=25 --prune-keep=25 --skip-prune-bench=true --work=../../o/tessera --out=../../o/micro
 python3 plot_bench.py ../../o/micro --prefix=test --obj-bytes=1 --prune-keep=25
 ```
 
@@ -118,105 +109,74 @@ This section describes a local macrobenchmark that measures CI/CD overhead using
 
 ### Quickstart
 
-1) Start the stack
+1) Run bootstrap (starts the stack, waits for GitLab, registers the runner, and sets up the sample project).
 
 ```bash
 cd rebound/bench/macrobench
-GITLAB_EXTERNAL_HOST=<IP_ADDR or localhost> docker compose up -d
-# Then visit http://${GITLAB_EXTERNAL_HOST}:8089 in a web browser
-
-# Optional: wait for GitLab to be ready
-curl -sf http://${GITLAB_EXTERNAL_HOST}:8089/users/sign_in >/dev/null && echo ready
-
+./bootstrap.sh
 ```
+Note: Bootstrap will prompt for your host IP or `localhost`, then handle everything automatically. GitLab may also take a few minutes to initialize on first run — bootstrap waits for it automatically. You can also monitor progress via `docker logs -f gitlab`.
 
-2) Create and register a runner (new GitLab Runner workflow)
-
-- Open http://${GITLAB_EXTERNAL_HOST}:8089 and sign in as root.
-	- Credentials: username `root`, password `xY-7ab_!zPq-R9` (or whatever value you set for `initial_root_password` in the Compose file)
-- Admin Area → CI/CD → Runners → New runner
-	- Create an instance (or project) runner
-    - Assign the tag `local` to the runner in the UI (Admin → Runners → your runner → Edit).
-	- Copy the Runner authentication token (glrt-…)
-
-Register and configure the runner via bootstrap (required):
+2) Run the macrobenchmarks (set parameters appropriately):
 
 ```bash
-cd rebound/bench/macrobench
-./bootstrap.sh --runner-token glrt-PASTE_TOKEN_HERE
-```
+# Finds the project, pushes commits, triggers maintenance jobs, writes results.csv
+DEBUG={0,1} USE_REBOUND={0,1} TRIALS=n ./run.sh
 
-Make sure all docker containers are running:
+# Plot macrobenchmark results (writes PDFs next to the CSVs, all under $REBOUND_HOME/o by default).
+python3 plot_results.py <macro results dir>
+```
+Note: You can monitor the active Gitlab pipelines for the repo (e.g., `http://${GITLAB_EXTERNAL_HOST}:8089/root/sample-app/-/pipelines`) to see the benchmarks in action.
+
+3) Clean-up
+
 ```bash
-docker compose ps
+docker compose down -v
 ```
 
 Notes on bootstrap:
-- The bootstrap script registers the runner inside the existing `gitlab-runner` container, sets `runners.docker.network_mode = "macrobench_ci_net"`, restarts the container, mints a PAT, creates/pushes the sample project, and writes `.macrobench.env`.
-- With Runner v18+, tags and other properties are managed on the server side. Make sure to assign the tag `local` to the runner in the UI (Admin → Runners → your runner → Edit).
-- It always mints a fresh Personal Access Token for the root user programmatically (via gitlab-rails), validates it against the API, and saves it in `./.macrobench.env` as `export GITLAB_PAT=...`.
-- It creates or reuses a `sample-app` project and performs the initial Git push using the PAT (required for Git over HTTP).
-- Make sure there isn't a mismatch with 'protected' branch scoping - if the pipeline is running on a protected branch, runners (instance-wide or project-wide) must be configured to be allowed to run on protected branches, otherwise they might not pick up the jobs.
-
-3) Run the macrobenchmark
-
-```bash
-DEBUG={0,1} USE_REBOUND={0,1} TRIALS=n ./run.sh    # finds the project, pushes commits, triggers maintenance jobs, writes results.csv
-# You can monitor the active Gitlab pipelines for the repo (e.g., http://${GITLAB_EXTERNAL_HOST}:8089/root/sample-app/-/pipelines) to see the run.sh script in action.
-```
-
-Plot macrobenchmark results (writes PDFs next to the CSVs, typically under $REBOUND_HOME/o):
-```bash
-cd bench/macrobench
-# Outputs go to $REBOUND_HOME/o by default
-python3 plot_results.py <macro results dir>
-```
+- Creates a GitLab runner with the `local` tag via the API, registers it inside the `gitlab-runner` container, sets `runners.docker.network_mode = "macrobench_ci_net"`, and restarts the container.
+- Mints a fresh Personal Access Token for the root user programmatically (via gitlab-rails), validates it against the API, and saves it in `./.macrobench.env` as `export GITLAB_PAT=...`.
+- Creates or reuses a `sample-app` project and force-pushes the sample workloads using the PAT (required for Git over HTTP).
 
 Notes on run.sh:
 - If a job fails (i.e., the script reports a failure, or you observe a failure in the GitLab web interface), check that all containers are running (`docker compose ps`), check the runner logs (`docker logs gitlab-runner`), and check the job logs in the GitLab web interface for further details to debug.
 - It always sources `./.macrobench.env` if present so values in that file (e.g., `GITLAB_PAT`) override any existing environment variables.
 - CI jobs are tagged `[local]`; ensure your runner has tag `local`.
 
-### Clean-up
-
-```bash
-cd rebound/bench/macrobench
-docker compose down -v
-```
-
 <!-- ### Pipeline jobs
 
 The sample pipeline (in `rebound-sample-workloads/.gitlab-ci.yml`) communicates with the Rebound service at `http://rebound:8080` (service name and port on the Compose network).
 
 - Per-workload state update jobs (`sample_state_update`, `llama2_state_update`, `sqlite_state_update`)
-	- Stage: `deploy`
-	- Triggers: automatically on push when workload files change
-	- Does: POST `/api/v1/deployment/update` with repository, commit_sha, image_digest (placeholder), actor, workflow_id
+    - Stage: `deploy`
+    - Triggers: automatically on push when workload files change
+    - Does: POST `/api/v1/deployment/update` with repository, commit_sha, image_digest (placeholder), actor, workflow_id
 
 - create_snapshot
-	- Stage: `maintenance`
-	- Triggers: manual (Play in UI or via API)
-	- Variables required: `SNAPSHOT_ID`, `JUSTIFICATION`
-	- Does: POST `/api/v1/deployment/snapshot`, prints response and exposes a `ROLLBACK_TOKEN`
+    - Stage: `maintenance`
+    - Triggers: manual (Play in UI or via API)
+    - Variables required: `SNAPSHOT_ID`, `JUSTIFICATION`
+    - Does: POST `/api/v1/deployment/snapshot`, prints response and exposes a `ROLLBACK_TOKEN`
 
 - rollback
-	- Stage: `maintenance`
-	- Triggers: manual
-	- Variables required: `SNAPSHOT_ID`, `JUSTIFICATION`
-	- Variables optional: `ROLLBACK_TOKEN`
-	- Does: POST `/api/v1/rollback/initiate`
+    - Stage: `maintenance`
+    - Triggers: manual
+    - Variables required: `SNAPSHOT_ID`, `JUSTIFICATION`
+    - Variables optional: `ROLLBACK_TOKEN`
+    - Does: POST `/api/v1/rollback/initiate`
 
 - prune_snapshot
-	- Stage: `maintenance`
-	- Triggers: manual
-	- Variables required: `SNAPSHOT_ID`, `JUSTIFICATION`
-	- Does: POST `/api/v1/snapshot/prune`
+    - Stage: `maintenance`
+    - Triggers: manual
+    - Variables required: `SNAPSHOT_ID`, `JUSTIFICATION`
+    - Does: POST `/api/v1/snapshot/prune`
 
 - audit_lineage
-	- Stage: `audit`
-	- Triggers: manual
-	- Variables optional: `OBJECT` (defaults to `$REPOSITORY`)
-	- Does: GET `/api/v1/lineage/{object}` on the Rebound server and prints a JSON report and a concise table to the job log
+    - Stage: `audit`
+    - Triggers: manual
+    - Variables optional: `OBJECT` (defaults to `$REPOSITORY`)
+    - Does: GET `/api/v1/lineage/{object}` on the Rebound server and prints a JSON report and a concise table to the job log
 
 Outputs and data locations:
 - Service data: stored in the Docker named volume mounted at `/data` inside the `rebound` container (not bind-mounted to the host).

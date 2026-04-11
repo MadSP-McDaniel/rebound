@@ -15,6 +15,19 @@ if [ -f "$SCRIPT_DIR/.macrobench.env" ]; then
 fi
 
 say() { echo "[bootstrap] $*"; }
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+prompt_host() {
+  # Detect a default non-loopback IP if possible
+  local default_ip
+  default_ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+  default_ip=${default_ip:-localhost}
+  read -rp "[bootstrap] Enter GitLab host IP or 'localhost' [${default_ip}]: " input
+  input=${input:-$default_ip}
+  export GITLAB_EXTERNAL_HOST="$input"
+  export GITLAB_URL="http://$GITLAB_EXTERNAL_HOST:8089"
+}
 
 wait_gitlab() {
   say "Waiting for GitLab at ${GITLAB_URL} ..."
@@ -93,6 +106,19 @@ else
   ' "$cfg" > /tmp/config.toml && mv /tmp/config.toml "$cfg"
 fi
 INNER
+}
+
+create_runner_token() {
+  local pat=$1
+  local token
+  token=$(curl -s -X POST "${GITLAB_URL}/api/v4/user/runners" \
+    --noproxy "*" \
+    -H "PRIVATE-TOKEN: ${pat}" \
+    -d "runner_type=instance_type&tag_list=local" | jq -r '.token')
+  if [ -z "$token" ] || [ "$token" = "null" ]; then
+    say "Failed to create runner via API"; return 1
+  fi
+  echo "$token"
 }
 
 register_runner() {
@@ -224,12 +250,18 @@ push_sample_repo() {
   # Use the freshly minted PAT as the HTTP password (username=root)
   remote_url="$scheme://root:${pat}@${hostport}/${path_part}"
   git remote add origin "$remote_url" || git remote set-url origin "$remote_url"
-  git push -q -u origin main
+  # Unprotect main so we can force-push on re-runs, then re-protect
+  curl -s -X DELETE "${GITLAB_URL}/api/v4/projects/${project_id}/protected_branches/main" \
+    -H "PRIVATE-TOKEN: ${pat}" >/dev/null 2>&1 || true
+  git push -q --force -u origin main
+  curl -s -X POST "${GITLAB_URL}/api/v4/projects/${project_id}/protected_branches" \
+    -H "PRIVATE-TOKEN: ${pat}" \
+    -d "name=main&push_access_level=40&merge_access_level=40" >/dev/null
   popd >/dev/null
 }
 
 main() {
-  # Parse flags (supports: --runner-token TOKEN | --runner-token=TOKEN | -r TOKEN)
+  # Parse flags (--runner-token is optional; if omitted, runner is created via API)
   RUNNER_TOKEN=${GITLAB_RUNNER_TOKEN:-}
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -240,19 +272,16 @@ main() {
       -r)
         RUNNER_TOKEN=${2:-}; shift 2 ;;
       *)
-        # ignore unknown flags for now
         shift ;;
     esac
   done
-  # Require a runner token always
-  if [ -z "${RUNNER_TOKEN:-}" ]; then
-    echo "Usage: $0 --runner-token glrt-PASTE_TOKEN_HERE" >&2
-    echo "Hint: Create a runner in the GitLab UI and copy its glrt- token, then pass it here." >&2
-    exit 2
+  # Prompt for host if not already set
+  if [ -z "${GITLAB_EXTERNAL_HOST:-}" ]; then
+    prompt_host
   fi
+  say "Starting Docker Compose stack..."
+  docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d
   wait_gitlab
-  # Register and configure the runner (mandatory)
-  register_runner "$RUNNER_TOKEN"
   # Always mint a fresh PAT via gitlab-rails, ignoring any existing GITLAB_PAT
   unset GITLAB_PAT
   if ! PAT=$(get_root_token); then
@@ -264,9 +293,17 @@ main() {
     say "Failed to mint a working PAT programmatically. Is the GitLab container up and healthy?"
     exit 1
   fi
-  # Save PAT for convenience and print instruction for run.sh
   echo "export GITLAB_PAT=$PAT" > "$SCRIPT_DIR/.macrobench.env"
-  say "Wrote PAT to $SCRIPT_DIR/.macrobench.env. Run: source $SCRIPT_DIR/.macrobench.env before run.sh"
+  say "Wrote PAT to $SCRIPT_DIR/.macrobench.env."
+  # Create runner via API if no token was passed
+  if [ -z "${RUNNER_TOKEN:-}" ]; then
+    say "Creating runner via API..."
+    if ! RUNNER_TOKEN=$(create_runner_token "$PAT"); then
+      exit 1
+    fi
+    say "Runner token obtained: ${RUNNER_TOKEN:0:16}..."
+  fi
+  register_runner "$RUNNER_TOKEN"
   PID=$(create_project "$PAT" "sample-app")
   if [ -z "$PID" ] || [ "$PID" = "null" ]; then
     say "Failed to create project"; exit 1
@@ -274,6 +311,8 @@ main() {
   say "Created project id=$PID"
   push_sample_repo "$PID" "$PAT"
   say "Bootstrap complete. Visit ${GITLAB_URL}/projects/${PID}"
+  docker compose -f "$SCRIPT_DIR/docker-compose.yml" ps
+  echo -e "${GREEN}[bootstrap] Setup successful.${NC}"
 }
 
 main "$@"

@@ -91,7 +91,7 @@ for server in "simple-server" "prod-server"; do
     echo -e "\n${BLUE}Building $server...${NC}"
     cd "$PROJECT_ROOT/cmd/$server"
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
-    if go build .; then
+    if go build -buildvcs=false .; then
     echo -e "${GREEN}✅ $server build: PASSED${NC}"
         PASSED_TESTS=$((PASSED_TESTS + 1))
     else

@@ -25,7 +25,7 @@ cd "$PROJECT_ROOT/cmd/prod-server"
 # Build if needed
 if [ ! -f "./prod-server" ]; then
   echo "Building prod-server..."
-    go build .
+    go build -buildvcs=false .
 fi
 
 # Start server
