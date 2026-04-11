@@ -4,13 +4,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ "${1}" == "--host" ]]; then
     cd "$SCRIPT_DIR"
-    sudo apt-get install -y jq python3-pip python3-matplotlib python3-pandas python3-seaborn
+    sudo apt update && sudo apt -y install jq python3-pip python3-matplotlib python3-pandas python3-seaborn
     git config --local url."https://github.com/".insteadOf "git@github.com:"
     git submodule sync --recursive
     git submodule update --init --recursive
-    for dir in librebound cmd/prod-server cmd/simple-server bench/microbench; do
-        (cd "$SCRIPT_DIR/$dir" && go mod tidy)
-    done
+    docker run --rm -v "$SCRIPT_DIR":/rebound -w /rebound \
+        mcr.microsoft.com/devcontainers/go:1-1.24-bookworm \
+        bash -c 'for dir in librebound cmd/prod-server cmd/simple-server bench/microbench; do (cd "$dir" && go mod tidy); done'
 else
     export REBOUND_HOME=/rebound
     cd "$REBOUND_HOME"
